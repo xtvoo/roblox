@@ -1,0 +1,172 @@
+-- brainrot player morph (local-only fake morph)
+
+api:set_lua_name("brainrot_morph")
+
+local Players = game:GetService("Players")
+local lp = Players.LocalPlayer
+
+local MORPH_ASSET_ID = 112586636995159
+
+local morphEnabled = false
+local currentMorph
+local hiddenParts = {}
+
+----------------------------------------------------------------
+-- UI
+----------------------------------------------------------------
+local Tab = api:GetTab("character") or api:AddTab("character")
+if not Tab then
+    api:notify("brainrot morph: failed to get/add 'character' tab", 5)
+    return
+end
+
+local Box = Tab:AddLeftGroupbox("brainrot morph")
+
+local Toggle = Box:AddToggle("brainrot_morph_toggle", {
+    Text = "brainrot morph",
+    Tooltip = "Hide character & use Brainrot as body (local)",
+    Default = false,
+    Callback = function(v)
+        morphEnabled = v
+    end,
+})
+
+----------------------------------------------------------------
+-- helpers
+----------------------------------------------------------------
+
+local function loadModel()
+    local ok, objs = pcall(function()
+        return game:GetObjects("rbxassetid://" .. MORPH_ASSET_ID)
+    end)
+    if not ok or not objs or #objs == 0 then
+        api:notify("brainrot: failed to load asset", 5)
+        return nil
+    end
+    for _, o in ipairs(objs) do
+        if o:IsA("Model") then
+            return o
+        end
+    end
+    api:notify("brainrot: asset has no Model", 5)
+    return nil
+end
+
+local function hideCharacter(char)
+    table.clear(hiddenParts)
+    for _, obj in ipairs(char:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            hiddenParts[#hiddenParts+1] = {part = obj, t = obj.Transparency, cc = obj.CanCollide}
+            obj.Transparency = 1
+            obj.CanCollide = false
+        elseif obj:IsA("Decal") then
+            hiddenParts[#hiddenParts+1] = {part = obj, t = obj.Transparency}
+            obj.Transparency = 1
+        end
+    end
+end
+
+local function unhideCharacter()
+    for _, info in ipairs(hiddenParts) do
+        if info.part then
+            if info.t ~= nil then
+                info.part.Transparency = info.t
+            end
+            if info.cc ~= nil then
+                info.part.CanCollide = info.cc
+            end
+        end
+    end
+    table.clear(hiddenParts)
+end
+
+local function attachBrainrot(char, model)
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        api:notify("brainrot: no HRP", 5)
+        model:Destroy()
+        return
+    end
+
+    model.Parent = workspace
+    pcall(function()
+        model:PivotTo(hrp.CFrame)
+    end)
+
+    for _, part in ipairs(model:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.Anchored = false
+            local weld = Instance.new("WeldConstraint")
+            weld.Part0 = hrp
+            weld.Part1 = part
+            weld.Parent = part
+        end
+    end
+
+    currentMorph = model
+    api:notify("brainrot: morph active (local visual)", 3)
+end
+
+local function applyMorph(char)
+    if not morphEnabled then return end
+    if not char then return end
+
+    if currentMorph then
+        currentMorph:Destroy()
+        currentMorph = nil
+    end
+    unhideCharacter()
+
+    local model = loadModel()
+    if not model then return end
+
+    hideCharacter(char)
+    attachBrainrot(char, model)
+end
+
+local function removeMorph()
+    morphEnabled = false
+
+    if currentMorph then
+        currentMorph:Destroy()
+        currentMorph = nil
+    end
+
+    unhideCharacter()
+    api:notify("brainrot: morph disabled", 3)
+end
+
+----------------------------------------------------------------
+-- events & toggle logic
+----------------------------------------------------------------
+
+api:on_event("localplayer_spawned", function(char)
+    if morphEnabled then
+        task.defer(function()
+            applyMorph(char)
+        end)
+    else
+        unhideCharacter()
+    end
+end)
+
+api:on_event("unload", function()
+    morphEnabled = false
+    if currentMorph then
+        currentMorph:Destroy()
+        currentMorph = nil
+    end
+    unhideCharacter()
+end)
+
+morphEnabled = Toggle.Value or false
+
+Toggle:OnChanged(function(v)
+    morphEnabled = v
+    if v then
+        local char = lp.Character or lp.CharacterAdded:Wait()
+        applyMorph(char)
+    else
+        removeMorph()
+    end
+end)
